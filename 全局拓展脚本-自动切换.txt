@@ -1,0 +1,301 @@
+// Define main function (script entry)
+function main(config) {
+  // --- 基础配置区 ---
+
+  // 你的主代理组名称，通常是 'Proxies'、'Proxy'、'🚀 节点选择' 等
+  const preferredMainSelectorName = 'Proxies';
+
+  // 1. 自定义代理组
+  const customGroupConfigs = [
+    {
+      name: '🌍 Google',
+      type: 'select',
+      keywords: ['US', '美', 'JP', '日', 'HK', '港', '狮城', 'SG', 'TW', '台']
+    },
+    {
+      name: '📲 Telegram',
+      type: 'select',
+      keywords: ['US', '美', 'JP', '日', 'HK', '港', '狮城', 'SG', 'TW', '台']
+    },
+    {
+      name: '🍎 Apple',
+      type: 'select',
+      keywords: ['US', '美', 'JP', '日', 'HK', '港', '狮城', 'SG']
+    },
+    {
+      name: '🎬流媒体',
+      type: 'select',
+      keywords: ['解锁', 'Netflix', 'Baha', 'Hulu']
+    },
+    {
+      name: 'JP/SG-自动选择',
+      type: 'url-test',
+      keywords: ['JP', '日本', '日', 'SG', '新加坡', '狮城'],
+      defaultKeywords: ['JP', '日本', '日']
+    },
+  ];
+
+  // 2. 远程规则集 Rule Providers
+  const remoteRuleProviders = {
+    reject: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt'
+    },
+    icloud: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt'
+    },
+    apple: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt'
+    },
+    google: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt'
+    },
+    proxy: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt'
+    },
+    direct: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt'
+    },
+    private: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt'
+    },
+    gfw: {
+      type: 'http',
+      behavior: 'domain',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt'
+    },
+    telegramcidr: {
+      type: 'http',
+      behavior: 'ipcidr',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt'
+    },
+    cncidr: {
+      type: 'http',
+      behavior: 'ipcidr',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt'
+    },
+    lancidr: {
+      type: 'http',
+      behavior: 'ipcidr',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt'
+    },
+    applications: {
+      type: 'http',
+      behavior: 'classical',
+      format: 'text',
+      url: 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt'
+    }
+  };
+
+  // --- 初始化保护 ---
+  config.proxies = config.proxies || [];
+  config['proxy-groups'] = config['proxy-groups'] || [];
+  config['rule-providers'] = config['rule-providers'] || {};
+
+  const allProxies = config.proxies;
+  const allProxyNames = allProxies
+    .map(p => p && p.name)
+    .filter(Boolean);
+
+  const customGroupNames = customGroupConfigs.map(g => g.name);
+
+  // --- 解析主代理组 ---
+  let resolvedMainSelectorName = preferredMainSelectorName;
+  let mainGroup = config['proxy-groups'].find(g => g.name === preferredMainSelectorName);
+
+  // 如果没有 Proxies，就找第一个 select 组作为主组
+  if (!mainGroup) {
+    mainGroup = config['proxy-groups'].find(g => g.type === 'select');
+    if (mainGroup) {
+      resolvedMainSelectorName = mainGroup.name;
+      console.log(`未找到 [${preferredMainSelectorName}]，已使用 [${resolvedMainSelectorName}] 作为主代理组。`);
+    }
+  }
+
+  // 如果完全没有可用代理组，则创建一个 Proxies
+  if (!mainGroup) {
+    mainGroup = {
+      name: preferredMainSelectorName,
+      type: 'select',
+      proxies: allProxyNames
+    };
+    config['proxy-groups'].unshift(mainGroup);
+    resolvedMainSelectorName = preferredMainSelectorName;
+    console.log(`未找到任何 select 代理组，已创建 [${resolvedMainSelectorName}]。`);
+  }
+
+  // --- 生成规则列表 ---
+  const customRules = [
+    'RULE-SET,applications,DIRECT',
+
+    // Clash 面板相关域名
+    'DOMAIN,clash.razord.top,DIRECT',
+    'DOMAIN,yacd.haishan.me,DIRECT',
+
+    // 私有地址和广告拦截
+    'RULE-SET,private,DIRECT',
+    'RULE-SET,reject,REJECT',
+
+    // Apple / iCloud 默认直连
+    'RULE-SET,icloud,DIRECT',
+    'RULE-SET,apple,DIRECT',
+
+    // Google / Telegram 分流
+    'RULE-SET,google,🌍 Google',
+    'RULE-SET,telegramcidr,📲 Telegram,no-resolve',
+
+    // 常见代理规则
+    'RULE-SET,proxy,' + resolvedMainSelectorName,
+    'RULE-SET,gfw,' + resolvedMainSelectorName,
+
+    // 国内和局域网直连
+    'RULE-SET,direct,DIRECT',
+    'RULE-SET,lancidr,DIRECT,no-resolve',
+    'RULE-SET,cncidr,DIRECT,no-resolve',
+    'GEOIP,CN,DIRECT',
+
+    // 兜底
+    'MATCH,' + resolvedMainSelectorName,
+  ];
+
+  // --- I. 处理远程规则集 ---
+  console.log('开始处理远程规则集...');
+
+  Object.entries(remoteRuleProviders).forEach(([name, providerData]) => {
+    config['rule-providers'][name] = {
+      type: providerData.type,
+      behavior: providerData.behavior,
+      format: providerData.format,
+      url: providerData.url,
+      path: `./ruleset/${name}.txt`,
+      interval: 86400,
+    };
+  });
+
+  // --- II. 处理自定义规则 ---
+  console.log('开始处理自定义规则...');
+
+  // 直接重建规则，避免旧规则干扰
+  config.rules = customRules;
+
+  // --- III. 处理自定义代理组 ---
+  console.log('开始处理自定义代理组...');
+
+  // 避免重复运行脚本时插入重复的自定义代理组
+  config['proxy-groups'] = config['proxy-groups'].filter(
+    group => !customGroupNames.includes(group.name)
+  );
+
+  // 删除旧自定义组后，重新获取主组引用
+  mainGroup = config['proxy-groups'].find(g => g.name === resolvedMainSelectorName);
+
+  // 如果主组被意外删除或不存在，则重新创建
+  if (!mainGroup) {
+    mainGroup = {
+      name: resolvedMainSelectorName,
+      type: 'select',
+      proxies: allProxyNames
+    };
+    config['proxy-groups'].unshift(mainGroup);
+  }
+
+  customGroupConfigs.slice().reverse().forEach(groupConfig => {
+    // 根据关键词筛选节点
+    let filteredProxyNames = allProxyNames.filter(proxyName =>
+      groupConfig.keywords.some(keyword => proxyName.includes(keyword))
+    );
+
+    // 如果配置了 defaultKeywords，且主关键词没匹配到，则使用 defaultKeywords 再筛一次
+    if (
+      filteredProxyNames.length === 0 &&
+      groupConfig.defaultKeywords &&
+      groupConfig.defaultKeywords.length > 0
+    ) {
+      filteredProxyNames = allProxyNames.filter(proxyName =>
+        groupConfig.defaultKeywords.some(keyword => proxyName.includes(keyword))
+      );
+    }
+
+    // 如果 select 组没有匹配节点，则尝试从主组复制节点，排除自定义组名，避免循环引用
+    if (
+      groupConfig.type === 'select' &&
+      filteredProxyNames.length === 0 &&
+      mainGroup &&
+      Array.isArray(mainGroup.proxies)
+    ) {
+      filteredProxyNames = mainGroup.proxies.filter(
+        proxyName => !customGroupNames.includes(proxyName)
+      );
+    }
+
+    if (filteredProxyNames.length === 0) {
+      console.log(`未找到 [${groupConfig.name}] 的节点，已跳过。`);
+      return;
+    }
+
+    const newProxyGroup = {
+      name: groupConfig.name,
+      type: groupConfig.type,
+      proxies: [...new Set(filteredProxyNames)]
+    };
+
+    // url-test / fallback 必须包含 url 和 interval
+    if (groupConfig.type === 'url-test' || groupConfig.type === 'fallback') {
+      newProxyGroup.url = 'http://www.gstatic.com/generate_204';
+      newProxyGroup.interval = 300;
+      newProxyGroup.tolerance = 50;
+    }
+
+    config['proxy-groups'].unshift(newProxyGroup);
+    console.log(`成功创建代理组 [${groupConfig.name}]。`);
+  });
+
+  // --- IV. 重新构建主选择器 ---
+  console.log('开始重新构建主选择器...');
+
+  mainGroup = config['proxy-groups'].find(g => g.name === resolvedMainSelectorName);
+
+  if (mainGroup) {
+    const validCustomGroupNames = customGroupNames.filter(name =>
+      config['proxy-groups'].some(group => group.name === name)
+    );
+
+    // 主组 = 自定义组 + 原始散装节点
+    mainGroup.proxies = [
+      ...new Set([
+        ...validCustomGroupNames,
+        ...allProxyNames
+      ])
+    ];
+
+    console.log(`已重构 [${resolvedMainSelectorName}]，包含所有有效自定义组。`);
+  } else {
+    console.log(`未找到主代理组 [${resolvedMainSelectorName}]，跳过主组重构。`);
+  }
+
+  return config;
+}
