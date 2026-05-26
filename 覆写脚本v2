@@ -1,68 +1,70 @@
 const main = (config) => {
 
-  // =========================================
+  // =========================================================
   // 初始化
-  // =========================================
+  // =========================================================
 
   config.proxies = config.proxies || [];
   config["proxy-groups"] = config["proxy-groups"] || [];
+  config["rule-providers"] = config["rule-providers"] || {};
   config.rules = config.rules || [];
 
-  const allProxies = config.proxies;
-
-  const allProxyNames = allProxies
+  const allProxyNames = config.proxies
     .map(p => p && p.name)
     .filter(Boolean);
 
-  // =========================================
-  // 节点过滤函数
-  // =========================================
+  // =========================================================
+  // 节点筛选（严格匹配，避免尼日利亚 NG 命中 SG）
+  // =========================================================
 
-  const filterProxies = (regex) => {
-    return allProxyNames.filter(name => regex.test(name));
-  };
+  const filterNodes = (regex) =>
+    allProxyNames.filter(name => regex.test(name));
 
-  // =========================================
-  // 地区节点筛选（修复误匹配）
-  // =========================================
-
-  const hkNodes = filterProxies(
-    /香港|HK|HKG|Hong\s?Kong|🇭🇰/i
+  const hkNodes = filterNodes(
+    /(?:^|\s|_|-)(HK|HKG)(?:\d+)?(?:$|\s|_|-)|香港|Hong\s?Kong|🇭🇰/i
   );
 
-  const twNodes = filterProxies(
-    /台湾|TW|TWN|Taiwan|🇹🇼/i
+  const twNodes = filterNodes(
+    /(?:^|\s|_|-)(TW|TWN)(?:\d+)?(?:$|\s|_|-)|台湾|Taiwan|🇹🇼/i
   );
 
-  const jpNodes = filterProxies(
-    /日本|JP|JPN|Japan|东京|大阪|埼玉|🇯🇵/i
+  const jpNodes = filterNodes(
+    /(?:^|\s|_|-)(JP|JPN)(?:\d+)?(?:$|\s|_|-)|日本|Japan|东京|大阪|埼玉|🇯🇵/i
   );
 
-  const krNodes = filterProxies(
-    /韩国|KR|KOR|Korea|首尔|🇰🇷/i
+  const krNodes = filterNodes(
+    /(?:^|\s|_|-)(KR|KOR)(?:\d+)?(?:$|\s|_|-)|韩国|Korea|首尔|🇰🇷/i
   );
 
-  const sgNodes = filterProxies(
-    /新加坡|SG|SGP|Singapore|狮城|🇸🇬/i
+  const sgNodes = filterNodes(
+    /(?:^|\s|_|-)(SG|SGP)(?:\d+)?(?:$|\s|_|-)|新加坡|Singapore|狮城|🇸🇬/i
   );
 
-  const usNodes = filterProxies(
-    /美国|US|USA|United\s?States|洛杉矶|硅谷|西雅图|🇺🇸/i
+  const usNodes = filterNodes(
+    /(?:^|\s|_|-)(US|USA)(?:\d+)?(?:$|\s|_|-)|美国|United\s?States|洛杉矶|西雅图|硅谷|🇺🇸/i
   );
 
-  // =========================================
-  // 删除旧组（避免重复）
-  // =========================================
+  // =========================================================
+  // 删除旧组
+  // =========================================================
 
   const customGroups = [
     "🚀 节点选择",
+
     "亚洲自动策略",
     "全球自动策略",
 
     "🌍 Google",
     "📲 Telegram",
     "🍎 Apple",
+    "🪟 Microsoft",
+    "🤖 AI",
     "🎬流媒体",
+    "▶️ YouTube",
+    "🎵 Spotify",
+    "🎮 Steam",
+    "🎵 TikTok",
+    "🐙 GitHub",
 
     "香港自动策略",
     "台湾自动策略",
@@ -74,16 +76,16 @@ const main = (config) => {
 
   config["proxy-groups"] =
     config["proxy-groups"].filter(
-      group => !customGroups.includes(group.name)
+      g => !customGroups.includes(g.name)
     );
 
-  // =========================================
-  // 创建 URL-Test 自动组
-  // =========================================
+  // =========================================================
+  // 稳定版 url-test
+  // 不加 lazy timeout strict-route 等实验参数
+  // =========================================================
 
-  const createUrlTestGroup = (name, proxies) => {
+  const createUrlTest = (name, proxies) => {
 
-    // 防止空组报错
     if (!proxies || proxies.length === 0) {
       proxies = ["DIRECT"];
     }
@@ -91,29 +93,41 @@ const main = (config) => {
     return {
       name,
       type: "url-test",
+
       proxies,
+
       url: "https://cp.cloudflare.com/generate_204",
+
       interval: 300,
+
       tolerance: 200
     };
   };
 
-  // =========================================
-  // 构建代理组
-  // =========================================
+  // =========================================================
+  // Proxy Groups
+  // =========================================================
 
   const proxyGroups = [
 
-    // =====================================
-    // 主选择器（最前面）
-    // =====================================
+    // =====================================================
+    // 主入口（放最前）
+    // =====================================================
 
     {
       name: "🚀 节点选择",
+
       type: "select",
+
       proxies: [
+
         "亚洲自动策略",
         "全球自动策略",
+
+        "🤖 AI",
+        "🌍 Google",
+        "📲 Telegram",
+        "🎬流媒体",
 
         "日本自动策略",
         "新国自动策略",
@@ -129,32 +143,37 @@ const main = (config) => {
       ]
     },
 
-    // =====================================
-    // 亚洲自动策略
-    // JP -> SG -> TW -> HK
-    // =====================================
+    // =====================================================
+    // 亚洲 fallback
+    // 日本 > 新加坡 > 台湾 > 香港
+    // =====================================================
 
     {
       name: "亚洲自动策略",
+
       type: "fallback",
+
       proxies: [
         "日本自动策略",
         "新国自动策略",
         "台湾自动策略",
         "香港自动策略"
       ],
+
       url: "https://cp.cloudflare.com/generate_204",
+
       interval: 300
     },
 
-    // =====================================
-    // 全球自动策略
-    // US -> JP -> SG -> TW -> HK
-    // =====================================
+    // =====================================================
+    // 全球 fallback
+    // =====================================================
 
     {
       name: "全球自动策略",
+
       type: "fallback",
+
       proxies: [
         "美国自动策略",
         "日本自动策略",
@@ -162,22 +181,23 @@ const main = (config) => {
         "台湾自动策略",
         "香港自动策略"
       ],
+
       url: "https://cp.cloudflare.com/generate_204",
+
       interval: 300
     },
 
-    // =====================================
-    // 业务组
-    // =====================================
+    // =====================================================
+    // 分流策略
+    // =====================================================
 
     {
       name: "🌍 Google",
       type: "select",
       proxies: [
-        "亚洲自动策略",
         "全球自动策略",
+        "美国自动策略",
         "日本自动策略",
-        "新国自动策略",
         "DIRECT"
       ]
     },
@@ -187,10 +207,8 @@ const main = (config) => {
       type: "select",
       proxies: [
         "亚洲自动策略",
-        "全球自动策略",
         "日本自动策略",
-        "新国自动策略",
-        "DIRECT"
+        "新国自动策略"
       ]
     },
 
@@ -199,9 +217,29 @@ const main = (config) => {
       type: "select",
       proxies: [
         "DIRECT",
-        "亚洲自动策略",
+        "日本自动策略",
         "香港自动策略",
         "台湾自动策略"
+      ]
+    },
+
+    {
+      name: "🪟 Microsoft",
+      type: "select",
+      proxies: [
+        "DIRECT",
+        "日本自动策略",
+        "全球自动策略"
+      ]
+    },
+
+    {
+      name: "🤖 AI",
+      type: "select",
+      proxies: [
+        "全球自动策略",
+        "美国自动策略",
+        "日本自动策略"
       ]
     },
 
@@ -209,68 +247,227 @@ const main = (config) => {
       name: "🎬流媒体",
       type: "select",
       proxies: [
-        "亚洲自动策略",
         "日本自动策略",
-        "新国自动策略",
+        "美国自动策略",
+        "新国自动策略"
+      ]
+    },
+
+    {
+      name: "▶️ YouTube",
+      type: "select",
+      proxies: [
+        "日本自动策略",
         "美国自动策略"
       ]
     },
 
-    // =====================================
-    // 地区自动测速组
-    // =====================================
+    {
+      name: "🎵 Spotify",
+      type: "select",
+      proxies: [
+        "日本自动策略",
+        "新国自动策略"
+      ]
+    },
 
-    createUrlTestGroup(
-      "日本自动策略",
-      jpNodes
-    ),
+    {
+      name: "🎮 Steam",
+      type: "select",
+      proxies: [
+        "DIRECT",
+        "日本自动策略",
+        "亚洲自动策略"
+      ]
+    },
 
-    createUrlTestGroup(
-      "新国自动策略",
-      sgNodes
-    ),
+    {
+      name: "🎵 TikTok",
+      type: "select",
+      proxies: [
+        "日本自动策略",
+        "美国自动策略",
+        "新国自动策略"
+      ]
+    },
 
-    createUrlTestGroup(
-      "台湾自动策略",
-      twNodes
-    ),
+    {
+      name: "🐙 GitHub",
+      type: "select",
+      proxies: [
+        "DIRECT",
+        "日本自动策略"
+      ]
+    },
 
-    createUrlTestGroup(
-      "香港自动策略",
-      hkNodes
-    ),
+    // =====================================================
+    // 地区测速组
+    // =====================================================
 
-    createUrlTestGroup(
-      "美国自动策略",
-      usNodes
-    ),
-
-    createUrlTestGroup(
-      "韩国自动策略",
-      krNodes
-    )
-
+    createUrlTest("日本自动策略", jpNodes),
+    createUrlTest("新国自动策略", sgNodes),
+    createUrlTest("台湾自动策略", twNodes),
+    createUrlTest("香港自动策略", hkNodes),
+    createUrlTest("美国自动策略", usNodes),
+    createUrlTest("韩国自动策略", krNodes)
   ];
-
-  // =========================================
-  // 插入代理组
-  // =========================================
 
   config["proxy-groups"].unshift(...proxyGroups);
 
-  // =========================================
-  // 基础规则（后面你再补）
-  // =========================================
+  // =========================================================
+  // Rule Providers
+  // =========================================================
+
+  config["rule-providers"] = {
+
+    reject: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt",
+      path: "./ruleset/reject.txt",
+      interval: 86400
+    },
+
+    icloud: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt",
+      path: "./ruleset/icloud.txt",
+      interval: 86400
+    },
+
+    apple: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt",
+      path: "./ruleset/apple.txt",
+      interval: 86400
+    },
+
+    google: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt",
+      path: "./ruleset/google.txt",
+      interval: 86400
+    },
+
+    proxy: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt",
+      path: "./ruleset/proxy.txt",
+      interval: 86400
+    },
+
+    direct: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt",
+      path: "./ruleset/direct.txt",
+      interval: 86400
+    },
+
+    private: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt",
+      path: "./ruleset/private.txt",
+      interval: 86400
+    },
+
+    gfw: {
+      type: "http",
+      behavior: "domain",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt",
+      path: "./ruleset/gfw.txt",
+      interval: 86400
+    },
+
+    telegramcidr: {
+      type: "http",
+      behavior: "ipcidr",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt",
+      path: "./ruleset/telegramcidr.txt",
+      interval: 86400
+    },
+
+    cncidr: {
+      type: "http",
+      behavior: "ipcidr",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt",
+      path: "./ruleset/cncidr.txt",
+      interval: 86400
+    },
+
+    lancidr: {
+      type: "http",
+      behavior: "ipcidr",
+      format: "text",
+      url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt",
+      path: "./ruleset/lancidr.txt",
+      interval: 86400
+    }
+  };
+
+  // =========================================================
+  // Rules
+  // =========================================================
 
   config.rules = [
+
+    // 自定义直连
+    "DOMAIN-SUFFIX,yuchsh.top,DIRECT",
 
     // Clash 面板
     "DOMAIN,clash.razord.top,DIRECT",
     "DOMAIN,yacd.haishan.me,DIRECT",
 
-    // 最终兜底
+    // 广告拦截
+    "RULE-SET,reject,REJECT",
+
+    // Apple
+    "RULE-SET,icloud,DIRECT",
+    "RULE-SET,apple,🍎 Apple",
+
+    // Google
+    "RULE-SET,google,🌍 Google",
+
+    // Telegram
+    "RULE-SET,telegramcidr,📲 Telegram,no-resolve",
+
+    // 国外代理
+    "RULE-SET,proxy,🚀 节点选择",
+    "RULE-SET,gfw,🚀 节点选择",
+
+    // 国内直连
+    "RULE-SET,direct,DIRECT",
+    "RULE-SET,private,DIRECT",
+
+    "RULE-SET,lancidr,DIRECT,no-resolve",
+    "RULE-SET,cncidr,DIRECT,no-resolve",
+
+    "GEOIP,CN,DIRECT",
+
+    // 白名单模式最终规则
     "MATCH,🚀 节点选择"
   ];
+
+  // =========================================================
+  // 不修改 DNS / TUN
+  // 交给 FLClash GUI 自己控制
+  // 避免 timeout
+  // =========================================================
 
   return config;
 };
