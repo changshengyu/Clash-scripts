@@ -1,190 +1,276 @@
-proxy-groups:
+const main = (config) => {
 
-# -------------------------
-# 地区手动策略
-# -------------------------
+  // =========================================
+  // 初始化
+  // =========================================
 
-  - name: 香港手动策略
-    type: select
-    proxies:
-      - 香港节点
-      - DIRECT
+  config.proxies = config.proxies || [];
+  config["proxy-groups"] = config["proxy-groups"] || [];
+  config.rules = config.rules || [];
 
-  - name: 台湾手动策略
-    type: select
-    proxies:
-      - 台湾节点
-      - DIRECT
+  const allProxies = config.proxies;
 
-  - name: 日本手动策略
-    type: select
-    proxies:
-      - 日本节点
-      - DIRECT
+  const allProxyNames = allProxies
+    .map(p => p && p.name)
+    .filter(Boolean);
 
-  - name: 韩国手动策略
-    type: select
-    proxies:
-      - 韩国节点
-      - DIRECT
+  // =========================================
+  // 节点过滤函数
+  // =========================================
 
-  - name: 新国手动策略
-    type: select
-    proxies:
-      - 新国节点
-      - DIRECT
+  const filterProxies = (regex) => {
+    return allProxyNames.filter(name => regex.test(name));
+  };
 
-  - name: 美国手动策略
-    type: select
-    proxies:
-      - 美国节点
-      - DIRECT
+  // =========================================
+  // 地区节点筛选（修复误匹配）
+  // =========================================
 
-  - name: 游戏手动策略
-    type: select
-    proxies:
-      - 游戏节点
-      - DIRECT
+  const hkNodes = filterProxies(
+    /香港|HK|HKG|Hong\s?Kong|🇭🇰/i
+  );
 
-  - name: 全球手动策略
-    type: select
-    proxies:
-      - 全球节点
-      - DIRECT
+  const twNodes = filterProxies(
+    /台湾|TW|TWN|Taiwan|🇹🇼/i
+  );
 
-# -------------------------
-# 地区自动测速策略
-# -------------------------
+  const jpNodes = filterProxies(
+    /日本|JP|JPN|Japan|东京|大阪|埼玉|🇯🇵/i
+  );
 
-  - name: 香港自动策略
-    type: url-test
-    proxies:
-      - 香港节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+  const krNodes = filterProxies(
+    /韩国|KR|KOR|Korea|首尔|🇰🇷/i
+  );
 
-  - name: 台湾自动策略
-    type: url-test
-    proxies:
-      - 台湾节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+  const sgNodes = filterProxies(
+    /新加坡|SG|SGP|Singapore|狮城|🇸🇬/i
+  );
 
-  - name: 日本自动策略
-    type: url-test
-    proxies:
-      - 日本节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+  const usNodes = filterProxies(
+    /美国|US|USA|United\s?States|洛杉矶|硅谷|西雅图|🇺🇸/i
+  );
 
-  - name: 韩国自动策略
-    type: url-test
-    proxies:
-      - 韩国节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+  // =========================================
+  // 删除旧组（避免重复）
+  // =========================================
 
-  - name: 新国自动策略
-    type: url-test
-    proxies:
-      - 新国节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+  const customGroups = [
+    "🚀 节点选择",
+    "亚洲自动策略",
+    "全球自动策略",
 
-  - name: 美国自动策略
-    type: url-test
-    proxies:
-      - 美国节点
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
-    tolerance: 200
+    "🌍 Google",
+    "📲 Telegram",
+    "🍎 Apple",
+    "🎬流媒体",
 
-# -------------------------
-# 亚洲自动策略（核心）
-# JP -> SG -> TW -> HK
-# -------------------------
+    "香港自动策略",
+    "台湾自动策略",
+    "日本自动策略",
+    "韩国自动策略",
+    "新国自动策略",
+    "美国自动策略"
+  ];
 
-  - name: 亚洲自动策略
-    type: fallback
-    proxies:
-      - 日本自动策略
-      - 新国自动策略
-      - 台湾自动策略
-      - 香港自动策略
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
+  config["proxy-groups"] =
+    config["proxy-groups"].filter(
+      group => !customGroups.includes(group.name)
+    );
 
-# -------------------------
-# 全球自动策略
-# US -> JP -> SG -> TW -> HK
-# -------------------------
+  // =========================================
+  // 创建 URL-Test 自动组
+  // =========================================
 
-  - name: 全球自动策略
-    type: fallback
-    proxies:
-      - 美国自动策略
-      - 日本自动策略
-      - 新国自动策略
-      - 台湾自动策略
-      - 香港自动策略
-    url: https://cp.cloudflare.com/generate_204
-    interval: 300
+  const createUrlTestGroup = (name, proxies) => {
 
-# -------------------------
-# 业务策略组
-# -------------------------
+    // 防止空组报错
+    if (!proxies || proxies.length === 0) {
+      proxies = ["DIRECT"];
+    }
 
-  - name: 🌍 Google
-    type: select
-    proxies:
-      - 亚洲自动策略
-      - 全球自动策略
-      - 日本自动策略
-      - 新国自动策略
-      - DIRECT
+    return {
+      name,
+      type: "url-test",
+      proxies,
+      url: "https://cp.cloudflare.com/generate_204",
+      interval: 300,
+      tolerance: 200
+    };
+  };
 
-  - name: 📲 Telegram
-    type: select
-    proxies:
-      - 亚洲自动策略
-      - 全球自动策略
-      - 日本自动策略
-      - 新国自动策略
-      - DIRECT
+  // =========================================
+  // 构建代理组
+  // =========================================
 
-  - name: 🍎 Apple
-    type: select
-    proxies:
-      - DIRECT
-      - 亚洲自动策略
-      - 香港自动策略
-      - 台湾自动策略
+  const proxyGroups = [
 
-  - name: 🎬流媒体
-    type: select
-    proxies:
-      - 亚洲自动策略
-      - 日本自动策略
-      - 新国自动策略
-      - 美国自动策略
+    // =====================================
+    // 主选择器（最前面）
+    // =====================================
 
-# -------------------------
-# 主代理组
-# -------------------------
+    {
+      name: "🚀 节点选择",
+      type: "select",
+      proxies: [
+        "亚洲自动策略",
+        "全球自动策略",
 
-  - name: 🚀 节点选择
-    type: select
-    proxies:
-      - 亚洲自动策略
-      - 全球自动策略
-      - 香港自动策略
-      - 台湾自动策略
-      - 日本自动策略
-      - 新国自动策略
-      - 美国自动策略
-      - DIRECT
+        "日本自动策略",
+        "新国自动策略",
+        "台湾自动策略",
+        "香港自动策略",
+
+        "美国自动策略",
+        "韩国自动策略",
+
+        "DIRECT",
+
+        ...allProxyNames
+      ]
+    },
+
+    // =====================================
+    // 亚洲自动策略
+    // JP -> SG -> TW -> HK
+    // =====================================
+
+    {
+      name: "亚洲自动策略",
+      type: "fallback",
+      proxies: [
+        "日本自动策略",
+        "新国自动策略",
+        "台湾自动策略",
+        "香港自动策略"
+      ],
+      url: "https://cp.cloudflare.com/generate_204",
+      interval: 300
+    },
+
+    // =====================================
+    // 全球自动策略
+    // US -> JP -> SG -> TW -> HK
+    // =====================================
+
+    {
+      name: "全球自动策略",
+      type: "fallback",
+      proxies: [
+        "美国自动策略",
+        "日本自动策略",
+        "新国自动策略",
+        "台湾自动策略",
+        "香港自动策略"
+      ],
+      url: "https://cp.cloudflare.com/generate_204",
+      interval: 300
+    },
+
+    // =====================================
+    // 业务组
+    // =====================================
+
+    {
+      name: "🌍 Google",
+      type: "select",
+      proxies: [
+        "亚洲自动策略",
+        "全球自动策略",
+        "日本自动策略",
+        "新国自动策略",
+        "DIRECT"
+      ]
+    },
+
+    {
+      name: "📲 Telegram",
+      type: "select",
+      proxies: [
+        "亚洲自动策略",
+        "全球自动策略",
+        "日本自动策略",
+        "新国自动策略",
+        "DIRECT"
+      ]
+    },
+
+    {
+      name: "🍎 Apple",
+      type: "select",
+      proxies: [
+        "DIRECT",
+        "亚洲自动策略",
+        "香港自动策略",
+        "台湾自动策略"
+      ]
+    },
+
+    {
+      name: "🎬流媒体",
+      type: "select",
+      proxies: [
+        "亚洲自动策略",
+        "日本自动策略",
+        "新国自动策略",
+        "美国自动策略"
+      ]
+    },
+
+    // =====================================
+    // 地区自动测速组
+    // =====================================
+
+    createUrlTestGroup(
+      "日本自动策略",
+      jpNodes
+    ),
+
+    createUrlTestGroup(
+      "新国自动策略",
+      sgNodes
+    ),
+
+    createUrlTestGroup(
+      "台湾自动策略",
+      twNodes
+    ),
+
+    createUrlTestGroup(
+      "香港自动策略",
+      hkNodes
+    ),
+
+    createUrlTestGroup(
+      "美国自动策略",
+      usNodes
+    ),
+
+    createUrlTestGroup(
+      "韩国自动策略",
+      krNodes
+    )
+
+  ];
+
+  // =========================================
+  // 插入代理组
+  // =========================================
+
+  config["proxy-groups"].unshift(...proxyGroups);
+
+  // =========================================
+  // 基础规则（后面你再补）
+  // =========================================
+
+  config.rules = [
+
+    // Clash 面板
+    "DOMAIN,clash.razord.top,DIRECT",
+    "DOMAIN,yacd.haishan.me,DIRECT",
+
+    // 最终兜底
+    "MATCH,🚀 节点选择"
+  ];
+
+  return config;
+};
