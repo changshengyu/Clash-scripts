@@ -156,9 +156,7 @@ function main(config) {
     kr: groupIfNotEmpty("韩国自动策略", krNodes)
   };
 
-  // 亚洲自动策略不再把 JP / SG / TW / HK 原始节点混合测速；
-  // 改为按地区组 fallback：日本 -> 新加坡 -> 台湾 -> 香港。
-  // 每个地区组内部仍由各自的 url-test 自动选择该地区最优节点。
+  // 亚洲策略按地区严格分级；每个地区组内部再由 url-test 选择最快节点
   const asianPriorityGroups = compact([
     regionGroupNames.jp,
     regionGroupNames.sg,
@@ -166,7 +164,7 @@ function main(config) {
     regionGroupNames.hk
   ]);
 
-  const asianAutoProxies = asianPriorityGroups.length > 0
+  const asianFallbackProxies = asianPriorityGroups.length > 0
     ? asianPriorityGroups
     : (hasUsableNodes ? usableProxyNames : ["DIRECT"]);
 
@@ -176,7 +174,7 @@ function main(config) {
 
   // GitHub fallback 按此顺序优先选择地区，同时补入未识别地区的节点
   const githubProxyCandidates = hasUsableNodes
-    ? compact([jpNodes, sgNodes, usNodes, twNodes, hkNodes, krNodes, usableProxyNames])
+    ? compact([jpNodes, sgNodes, twNodes, hkNodes, usNodes, krNodes, usableProxyNames])
     : ["DIRECT"];
 
   const regionAutoGroups = compact([
@@ -238,15 +236,14 @@ function main(config) {
     },
 
     // =====================================================
-    // 亚洲自动：按地区优先级 fallback
-    // 日本 -> 新加坡 -> 台湾 -> 香港
-    // 地区内部仍由对应 url-test 选择最快节点
+    // 亚洲自动：日本 > 新加坡 > 台湾 > 香港
+    // 每个地区内部先测速选最快节点；当前地区全部不可用时才降级到下一地区
     // =====================================================
 
     {
       name: "亚洲自动策略",
       type: "fallback",
-      proxies: asianAutoProxies,
+      proxies: asianFallbackProxies,
       url: TEST_URL,
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
