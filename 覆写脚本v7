@@ -1,0 +1,679 @@
+function main(config) {
+
+  // =========================================================
+  // 初始化
+  // =========================================================
+
+  config.proxies = config.proxies || [];
+  config["proxy-groups"] = config["proxy-groups"] || [];
+  config["rule-providers"] = config["rule-providers"] || {};
+  config.rules = config.rules || [];
+
+  // 只过滤明显的订阅信息条目，避免把名称含“实验”或“测试”的真实节点误删
+  const EXCLUDE_NODE_REGEX =
+    /(?:官网|套餐|剩余(?:流量)?|流量(?:剩余)?|到期|过期|订阅|客服|公告|Expire|Traffic|Subscription|Reset)/i;
+
+  const unique = (items) => {
+    const result = [];
+    items.forEach(item => {
+      if (item && !result.includes(item)) result.push(item);
+    });
+    return result;
+  };
+
+  const allProxyNames = unique(config.proxies
+    .map(p => p && p.name)
+    .filter(name => typeof name === "string" && name.trim()));
+
+  const usableProxyNames = allProxyNames
+    .filter(name => !EXCLUDE_NODE_REGEX.test(name));
+
+  const hasUsableNodes = usableProxyNames.length > 0;
+
+  // =========================================================
+  // 测速参数
+  // =========================================================
+
+  const TEST_URL = "https://cp.cloudflare.com/generate_204";
+  const GITHUB_TEST_URL = "https://github.com/favicon.ico";
+  const TEST_INTERVAL = 300;     // 5 分钟测速一次，减少重复探测
+  const TEST_TIMEOUT = 8000;     // 国内跨境链路抖动较大，避免 3 秒误判
+  const TEST_TOLERANCE = 200;    // 200ms 切换容忍度
+
+  // =========================================================
+  // 节点筛选
+  // 严格匹配，避免 NG / Nigeria 误命中 SG
+  // =========================================================
+
+  const filterNodes = (regex) =>
+    usableProxyNames.filter(name => regex.test(name));
+
+  const hkNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:HK|HKG)(?:\d+)?(?:$|[^A-Za-z])|香港|Hong[\s_-]*Kong|🇭🇰/i
+  );
+
+  const twNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:TW|TWN)(?:\d+)?(?:$|[^A-Za-z])|台湾|臺灣|Taiwan|🇹🇼/i
+  );
+
+  const jpNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:JP|JPN)(?:\d+)?(?:$|[^A-Za-z])|日本|Japan|东京|東京|大阪|埼玉|🇯🇵/i
+  );
+
+  const krNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:KR|KOR)(?:\d+)?(?:$|[^A-Za-z])|韩国|韓国|Korea|首尔|首爾|🇰🇷/i
+  );
+
+  const sgNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:SG|SGP)(?:\d+)?(?:$|[^A-Za-z])|新加坡|Singapore|狮城|獅城|🇸🇬/i
+  );
+
+  const usNodes = filterNodes(
+    /(?:^|[^A-Za-z])(?:US|USA)(?:\d+)?(?:$|[^A-Za-z])|美国|美國|United[\s_-]*States|洛杉矶|洛杉磯|西雅图|西雅圖|硅谷|圣何塞|聖荷西|🇺🇸/i
+  );
+
+  // =========================================================
+  // 删除旧的自定义组
+  // =========================================================
+
+  const customGroups = [
+    "🚀 节点选择",
+    "🧭 手动选择",
+
+    "亚洲自动策略",
+    "全球自动策略",
+
+    "🌍 Google",
+    "📲 Telegram",
+    "🍎 Apple",
+    "🪟 Microsoft",
+    "🤖 AI",
+    "🎬流媒体",
+    "▶️ YouTube",
+    "🎞 Netflix",
+    "🎵 Spotify",
+    "🎮 Steam",
+    "🎮 游戏平台",
+    "🎵 TikTok",
+    "🐙 GitHub",
+    "🐟 漏网之鱼",
+
+    "香港自动策略",
+    "台湾自动策略",
+    "日本自动策略",
+    "韩国自动策略",
+    "新国自动策略",
+    "美国自动策略"
+  ];
+
+  config["proxy-groups"] =
+    config["proxy-groups"].filter(g => g && !customGroups.includes(g.name));
+
+  // =========================================================
+  // 自动策略组辅助函数
+  // =========================================================
+
+  const createUrlTest = (name, proxies) => {
+    if (!proxies || proxies.length === 0) return null;
+    return {
+      name,
+      type: "url-test",
+      proxies: unique(proxies),
+      url: TEST_URL,
+      interval: TEST_INTERVAL,
+      timeout: TEST_TIMEOUT,
+      tolerance: TEST_TOLERANCE,
+      lazy: true,
+      "expected-status": 204,
+      "max-failed-times": 2
+    };
+  };
+
+  const groupIfNotEmpty = (name, nodes) =>
+    nodes && nodes.length > 0 ? name : null;
+
+  const compact = (items) => {
+    const result = [];
+    items.forEach(item => {
+      if (!item) return;
+      if (Array.isArray(item)) {
+        item.forEach(subItem => {
+          if (subItem && !result.includes(subItem)) result.push(subItem);
+        });
+      } else if (!result.includes(item)) {
+        result.push(item);
+      }
+    });
+    return result;
+  };
+
+  const regionGroupNames = {
+    jp: groupIfNotEmpty("日本自动策略", jpNodes),
+    sg: groupIfNotEmpty("新国自动策略", sgNodes),
+    tw: groupIfNotEmpty("台湾自动策略", twNodes),
+    hk: groupIfNotEmpty("香港自动策略", hkNodes),
+    us: groupIfNotEmpty("美国自动策略", usNodes),
+    kr: groupIfNotEmpty("韩国自动策略", krNodes)
+  };
+
+  const asianNodes = compact([jpNodes, sgNodes, twNodes, hkNodes]);
+  const asianAutoProxies = asianNodes.length > 0
+    ? asianNodes
+    : (hasUsableNodes ? usableProxyNames : ["DIRECT"]);
+
+  const globalAutoProxies = hasUsableNodes
+    ? usableProxyNames
+    : ["DIRECT"];
+
+  // GitHub fallback 按此顺序优先选择地区，同时补入未识别地区的节点
+  const githubProxyCandidates = hasUsableNodes
+    ? compact([jpNodes, sgNodes, usNodes, twNodes, hkNodes, krNodes, usableProxyNames])
+    : ["DIRECT"];
+
+  const regionAutoGroups = compact([
+    createUrlTest("日本自动策略", jpNodes),
+    createUrlTest("新国自动策略", sgNodes),
+    createUrlTest("台湾自动策略", twNodes),
+    createUrlTest("香港自动策略", hkNodes),
+    createUrlTest("美国自动策略", usNodes),
+    createUrlTest("韩国自动策略", krNodes)
+  ]);
+
+  const allRegionAutoGroupNames = compact([
+    regionGroupNames.jp,
+    regionGroupNames.sg,
+    regionGroupNames.tw,
+    regionGroupNames.hk,
+    regionGroupNames.us,
+    regionGroupNames.kr
+  ]);
+
+  // =========================================================
+  // Proxy Groups
+  // =========================================================
+
+  const proxyGroups = [
+
+    // =====================================================
+    // 主入口只负责通用出口，不嵌套具体业务组，避免策略互相污染
+    // 不直接放原始节点，原始节点统一收纳到手动组
+    // =====================================================
+
+    {
+      name: "🚀 节点选择",
+      type: "select",
+      proxies: compact([
+        "亚洲自动策略",
+        "全球自动策略",
+
+        allRegionAutoGroupNames,
+        "🧭 手动选择"
+      ])
+    },
+
+    // =====================================================
+    // 手动选择：集中收纳所有原始节点
+    // DIRECT 只保留在手动组里，避免关键海外服务默认直连
+    // =====================================================
+
+    {
+      name: "🧭 手动选择",
+      type: "select",
+      proxies: compact([
+        allRegionAutoGroupNames,
+        "亚洲自动策略",
+        "全球自动策略",
+        hasUsableNodes ? usableProxyNames : [],
+        "DIRECT"
+      ])
+    },
+
+    // =====================================================
+    // 亚洲自动：在亚洲原始节点中按延迟选择
+    // =====================================================
+
+    {
+      name: "亚洲自动策略",
+      type: "url-test",
+      proxies: asianAutoProxies,
+      url: TEST_URL,
+      interval: TEST_INTERVAL,
+      timeout: TEST_TIMEOUT,
+      tolerance: TEST_TOLERANCE,
+      lazy: true,
+      "expected-status": 204,
+      "max-failed-times": 2
+    },
+
+    // =====================================================
+    // 全球自动：在全部可用原始节点中按延迟选择
+    // =====================================================
+
+    {
+      name: "全球自动策略",
+      type: "url-test",
+      proxies: globalAutoProxies,
+      url: TEST_URL,
+      interval: TEST_INTERVAL,
+      timeout: TEST_TIMEOUT,
+      tolerance: TEST_TOLERANCE,
+      lazy: true,
+      "expected-status": 204,
+      "max-failed-times": 2
+    },
+
+    // =====================================================
+    // 分流策略组
+    // =====================================================
+
+    {
+      name: "🌍 Google",
+      type: "select",
+      proxies: compact([
+        "全球自动策略",
+        regionGroupNames.us,
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        "亚洲自动策略",
+        "🧭 手动选择",
+        "DIRECT"
+      ])
+    },
+
+    {
+      name: "📲 Telegram",
+      type: "select",
+      proxies: compact([
+        "亚洲自动策略",
+        regionGroupNames.sg,
+        regionGroupNames.jp,
+        regionGroupNames.tw,
+        regionGroupNames.hk,
+        "全球自动策略",
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "🍎 Apple",
+      type: "select",
+      proxies: compact([
+        "DIRECT",
+        regionGroupNames.jp,
+        regionGroupNames.hk,
+        regionGroupNames.tw,
+        "亚洲自动策略",
+        "全球自动策略",
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "🪟 Microsoft",
+      type: "select",
+      proxies: compact([
+        "全球自动策略",
+        regionGroupNames.us,
+        regionGroupNames.jp,
+        "亚洲自动策略",
+        "🧭 手动选择",
+        "DIRECT"
+      ])
+    },
+
+    {
+      name: "🤖 AI",
+      type: "select",
+      proxies: compact([
+        "全球自动策略",
+        regionGroupNames.us,
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        regionGroupNames.tw,
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "▶️ YouTube",
+      type: "select",
+      proxies: compact([
+        regionGroupNames.jp,
+        regionGroupNames.us,
+        regionGroupNames.tw,
+        "全球自动策略",
+        "亚洲自动策略",
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "🎞 Netflix",
+      type: "select",
+      proxies: compact([
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        regionGroupNames.us,
+        regionGroupNames.tw,
+        regionGroupNames.hk,
+        "亚洲自动策略",
+        "全球自动策略",
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "🎵 Spotify",
+      type: "select",
+      proxies: compact([
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        regionGroupNames.us,
+        "亚洲自动策略",
+        "全球自动策略",
+        "🧭 手动选择",
+        "DIRECT"
+      ])
+    },
+
+    // Steam 下载会在规则层提前 DIRECT；Steam 商店 / 社区 / 海外服务默认走代理
+    {
+      name: "🎮 Steam",
+      type: "select",
+      proxies: compact([
+        "亚洲自动策略",
+        "全球自动策略",
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        regionGroupNames.us,
+        "🧭 手动选择"
+      ])
+    },
+
+    {
+      name: "🎵 TikTok",
+      type: "select",
+      proxies: compact([
+        regionGroupNames.jp,
+        regionGroupNames.us,
+        regionGroupNames.sg,
+        regionGroupNames.tw,
+        "全球自动策略",
+        "🧭 手动选择"
+      ])
+    },
+
+    // GitHub 使用专用地址逐节点检查，避免 Cloudflare 可用但 GitHub / GHCR TLS 失败
+    // 使用 fallback 自动跳过不能访问 GitHub 的节点，不依赖旧的手动选择缓存
+    {
+      name: "🐙 GitHub",
+      type: "fallback",
+      proxies: githubProxyCandidates,
+      url: GITHUB_TEST_URL,
+      interval: TEST_INTERVAL,
+      timeout: TEST_TIMEOUT,
+      lazy: false,
+      "expected-status": 200,
+      "max-failed-times": 2
+    },
+
+    {
+      name: "🐟 漏网之鱼",
+      type: "select",
+      proxies: compact([
+        "🚀 节点选择",
+        "亚洲自动策略",
+        "全球自动策略",
+        regionGroupNames.jp,
+        regionGroupNames.sg,
+        regionGroupNames.us,
+        "🧭 手动选择",
+        "DIRECT"
+      ])
+    },
+
+    // =====================================================
+    // 地区测速组会在下面追加，只创建实际匹配到节点的地区组
+    // =====================================================
+  ];
+
+  proxyGroups.push(...regionAutoGroups);
+
+  config["proxy-groups"].unshift(...proxyGroups);
+
+  // =========================================================
+  // Rule Providers
+  // 主规则源：MetaCubeX / meta-rules-dat
+  // 格式：Mihomo MRS
+  // =========================================================
+
+  const META_RULE_BASE =
+    "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
+
+  const createGeositeProvider = (name) => {
+    return {
+      type: "http",
+      behavior: "domain",
+      format: "mrs",
+      url: `${META_RULE_BASE}/geo/geosite/${name}.mrs`,
+      path: `./ruleset/MetaCubeX/geosite/${name}.mrs`,
+      interval: 86400,
+      proxy: "🐙 GitHub",
+      "size-limit": 16777216
+    };
+  };
+
+  const createGeoipProvider = (name) => {
+    return {
+      type: "http",
+      behavior: "ipcidr",
+      format: "mrs",
+      url: `${META_RULE_BASE}/geo/geoip/${name}.mrs`,
+      path: `./ruleset/MetaCubeX/geoip/${name}.mrs`,
+      interval: 86400,
+      proxy: "🐙 GitHub",
+      "size-limit": 16777216
+    };
+  };
+
+  const managedRuleProviders = {
+
+    // =====================================================
+    // 基础规则
+    // =====================================================
+
+    ads: createGeositeProvider("category-ads-all"),
+    private: createGeositeProvider("private"),
+    cn: createGeositeProvider("cn"),
+    geolocation_non_cn: createGeositeProvider("geolocation-!cn"),
+
+    geoip_private: createGeoipProvider("private"),
+    geoip_cn: createGeoipProvider("cn"),
+    geoip_telegram: createGeoipProvider("telegram"),
+
+    // =====================================================
+    // 常用服务
+    // =====================================================
+
+    apple: createGeositeProvider("apple"),
+    google: createGeositeProvider("google"),
+    github: createGeositeProvider("github"),
+    microsoft: createGeositeProvider("microsoft"),
+    onedrive: createGeositeProvider("onedrive"),
+
+    openai: createGeositeProvider("openai"),
+    telegram: createGeositeProvider("telegram"),
+
+    youtube: createGeositeProvider("youtube"),
+    netflix: createGeositeProvider("netflix"),
+    spotify: createGeositeProvider("spotify"),
+    tiktok: createGeositeProvider("tiktok"),
+
+    // =====================================================
+    // Steam / 游戏
+    // steam@cn：Steam 国内下载 / 国内 CDN
+    // category-games@cn：游戏国内 CDN / 国内服务
+    // steam：Steam 商店 / 社区 / 海外服务
+    // =====================================================
+
+    steam_cn: createGeositeProvider("steam@cn"),
+    games_cn: createGeositeProvider("category-games@cn"),
+    steam: createGeositeProvider("steam")
+  };
+
+  // 保留订阅或其它覆写脚本定义的 provider；同名项由本脚本的新版配置接管
+  config["rule-providers"] = {
+    ...config["rule-providers"],
+    ...managedRuleProviders
+  };
+
+  // =========================================================
+  // Rules
+  // 顺序很重要：
+  // 自定义直连 / 广告 / 私有 / 国内 CDN / 特定服务 / 国内 / 非 CN / 兜底
+  // =========================================================
+
+  config.rules = [
+
+    // =====================================================
+    // 你的自定义直连
+    // =====================================================
+
+    "DOMAIN-SUFFIX,yuchsh.top,DIRECT",
+
+    // Clash / Yacd 面板
+    "DOMAIN,clash.razord.top,DIRECT",
+    "DOMAIN,yacd.haishan.me,DIRECT",
+
+    // =====================================================
+    // 局域网 / 私有地址
+    // =====================================================
+
+    "RULE-SET,private,DIRECT",
+    "RULE-SET,geoip_private,DIRECT,no-resolve",
+
+    // =====================================================
+    // 广告拦截（放在私有地址之后，避免局域网域名被规则集误伤）
+    // =====================================================
+
+    "RULE-SET,ads,REJECT",
+
+    // =====================================================
+    // Steam 下载 / 游戏国内 CDN 直连
+    // 放在 Steam 海外规则之前
+    // 不把 steamstatic.com 全量直连，避免 Steam 商店资源被误直连
+    // =====================================================
+
+    "DOMAIN-SUFFIX,steamcontent.com,DIRECT",
+    "DOMAIN-SUFFIX,steamserver.net,DIRECT",
+    "DOMAIN-SUFFIX,steamchina.com,DIRECT",
+
+    "RULE-SET,steam_cn,DIRECT",
+    "RULE-SET,games_cn,DIRECT",
+
+    // =====================================================
+    // GitHub
+    // 放在 cn / geolocation 之前，避免被其它大类规则影响
+    // =====================================================
+
+    "RULE-SET,github,🐙 GitHub",
+
+    // 手写补充：GitHub 常见域名
+    "DOMAIN-SUFFIX,github.com,🐙 GitHub",
+    "DOMAIN-SUFFIX,github.io,🐙 GitHub",
+    "DOMAIN-SUFFIX,github.dev,🐙 GitHub",
+    "DOMAIN-SUFFIX,github.blog,🐙 GitHub",
+    "DOMAIN-SUFFIX,githubassets.com,🐙 GitHub",
+    "DOMAIN-SUFFIX,githubusercontent.com,🐙 GitHub",
+    "DOMAIN-SUFFIX,githubstatus.com,🐙 GitHub",
+    "DOMAIN-SUFFIX,ghcr.io,🐙 GitHub",
+    "DOMAIN-SUFFIX,githubcopilot.com,🐙 GitHub",
+    "DOMAIN-SUFFIX,github-cloud.s3.amazonaws.com,🐙 GitHub",
+    "DOMAIN-KEYWORD,github-production-release-asset-,🐙 GitHub",
+
+    // =====================================================
+    // Apple / Microsoft
+    // =====================================================
+
+    "RULE-SET,apple,🍎 Apple",
+    "RULE-SET,onedrive,🪟 Microsoft",
+    "RULE-SET,microsoft,🪟 Microsoft",
+
+    // =====================================================
+    // AI
+    // =====================================================
+
+    "RULE-SET,openai,🤖 AI",
+
+    // 手写补充：常见 AI 域名
+    "DOMAIN-SUFFIX,chatgpt.com,🤖 AI",
+    "DOMAIN-SUFFIX,openai.com,🤖 AI",
+    "DOMAIN-SUFFIX,oaistatic.com,🤖 AI",
+    "DOMAIN-SUFFIX,oaiusercontent.com,🤖 AI",
+    "DOMAIN-SUFFIX,anthropic.com,🤖 AI",
+    "DOMAIN-SUFFIX,claude.ai,🤖 AI",
+    "DOMAIN-SUFFIX,perplexity.ai,🤖 AI",
+    "DOMAIN-SUFFIX,poe.com,🤖 AI",
+    "DOMAIN,gemini.google.com,🤖 AI",
+
+    // =====================================================
+    // Telegram
+    // =====================================================
+
+    "RULE-SET,telegram,📲 Telegram",
+    "RULE-SET,geoip_telegram,📲 Telegram,no-resolve",
+
+    // =====================================================
+    // 流媒体 / 常用海外服务
+    // proxymedia 已删除，避免 404
+    // 其它海外媒体由 geolocation-!cn 兜底
+    // =====================================================
+
+    "RULE-SET,youtube,▶️ YouTube",
+    "RULE-SET,netflix,🎞 Netflix",
+    "RULE-SET,spotify,🎵 Spotify",
+    "RULE-SET,tiktok,🎵 TikTok",
+
+    // =====================================================
+    // Google
+    // YouTube 已经在前面单独处理
+    // =====================================================
+
+    "RULE-SET,google,🌍 Google",
+
+    // =====================================================
+    // Steam / 游戏海外服务
+    // Steam 下载国内 CDN 已经在前面直连
+    // =====================================================
+
+    "RULE-SET,steam,🎮 Steam",
+
+    // =====================================================
+    // 国内域名 / 国内 IP 直连
+    // =====================================================
+
+    "RULE-SET,cn,DIRECT",
+    "RULE-SET,geoip_cn,DIRECT,no-resolve",
+    "GEOIP,CN,DIRECT",
+
+    // =====================================================
+    // 非中国常见域名走主策略
+    // =====================================================
+
+    "RULE-SET,geolocation_non_cn,🚀 节点选择",
+
+    // =====================================================
+    // 最终兜底
+    // 白名单模式：未命中的流量走漏网之鱼
+    // =====================================================
+
+    "MATCH,🐟 漏网之鱼"
+  ];
+
+  // =========================================================
+  // 不修改 DNS / TUN
+  // 交给 FLClash GUI 自己控制
+  // =========================================================
+
+  return config;
+}
