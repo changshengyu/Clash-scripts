@@ -34,11 +34,11 @@ function main(config) {
   // 测速参数
   // =========================================================
 
-  const TEST_URL = "https://cp.cloudflare.com/generate_204";
+  const TEST_URL = "http://www.gstatic.com/generate_204";
   const GITHUB_TEST_URL = "https://github.com/favicon.ico";
-  const TEST_INTERVAL = 300;     // 5 分钟测速一次，减少重复探测
-  const TEST_TIMEOUT = 8000;     // 国内跨境链路抖动较大，避免 3 秒误判
-  const TEST_TOLERANCE = 200;    // 200ms 切换容忍度
+  const TEST_INTERVAL = 300;
+  const TEST_TIMEOUT = 15000;
+  const TEST_TOLERANCE = 300;
 
   // =========================================================
   // 节点筛选
@@ -156,16 +156,18 @@ function main(config) {
     kr: groupIfNotEmpty("韩国自动策略", krNodes)
   };
 
-  // 亚洲策略按地区严格分级；每个地区组内部再由 url-test 选择最快节点
-  const asianPriorityGroups = compact([
-    regionGroupNames.jp,
-    regionGroupNames.sg,
-    regionGroupNames.tw,
-    regionGroupNames.hk
+  // 亚洲自动策略直接使用具体节点做回退，避免把地区子组再嵌套进 fallback。
+  // 这样可以绕开 Clash/Mihomo 对嵌套组健康检查的误判。
+  // 顺序保持为：日本 -> 新加坡 -> 台湾 -> 香港。
+  const asianPriorityNodes = compact([
+    jpNodes,
+    sgNodes,
+    twNodes,
+    hkNodes
   ]);
 
-  const asianFallbackProxies = asianPriorityGroups.length > 0
-    ? asianPriorityGroups
+  const asianAutoProxies = asianPriorityNodes.length > 0
+    ? asianPriorityNodes
     : (hasUsableNodes ? usableProxyNames : ["DIRECT"]);
 
   const globalAutoProxies = hasUsableNodes
@@ -174,7 +176,7 @@ function main(config) {
 
   // GitHub fallback 按此顺序优先选择地区，同时补入未识别地区的节点
   const githubProxyCandidates = hasUsableNodes
-    ? compact([jpNodes, sgNodes, twNodes, hkNodes, usNodes, krNodes, usableProxyNames])
+    ? compact([jpNodes, sgNodes, usNodes, twNodes, hkNodes, krNodes, usableProxyNames])
     : ["DIRECT"];
 
   const regionAutoGroups = compact([
@@ -236,14 +238,15 @@ function main(config) {
     },
 
     // =====================================================
-    // 亚洲自动：日本 > 新加坡 > 台湾 > 香港
-    // 每个地区内部先测速选最快节点；当前地区全部不可用时才降级到下一地区
+    // 亚洲自动：按地区优先级 fallback
+    // 日本 -> 新加坡 -> 台湾 -> 香港
+    // 地区内部仍由对应 url-test 选择最快节点
     // =====================================================
 
     {
       name: "亚洲自动策略",
       type: "fallback",
-      proxies: asianFallbackProxies,
+      proxies: asianAutoProxies,
       url: TEST_URL,
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
