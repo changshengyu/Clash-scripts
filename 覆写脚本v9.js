@@ -1,6 +1,8 @@
 // =========================================================
 // mihomo_override_final.js
-// 针对特定 Wi-Fi 阻断/高并发风控进行了全面优化
+// 1. 区域组改为 fallback 按顺序故障转移
+// 2. 策略组顺序优化：节点选择 & 手动选择 置顶
+// 3. 全局开启 RTT 统一延迟与 HTTPS 测速防劫持
 // =========================================================
 
 function main(config) {
@@ -11,17 +13,12 @@ function main(config) {
   config.rules = config.rules || [];
 
   // =========================================================
-  // 全局内核优化（解决 Wi-Fi 阻断 & 降低测速超时率）
+  // 全局内核优化
   // =========================================================
 
-  // 1. 统一延迟计算（类似 Sing-box 的 RTT 测速，大大降低超时）
-  config["unified-delay"] = true;
-
-  // 2. 开启 TCP 并发（提升握手成功率）
-  config["tcp-concurrent"] = true;
-
-  // 3. 全局 TLS 指纹伪装（防止特定 Wi-Fi 拦截节点握手）
-  config["global-client-fingerprint"] = "chrome";
+  config["unified-delay"] = true; // RTT 统一延迟计算
+  config["tcp-concurrent"] = true; // TCP 并发握手
+  config["global-client-fingerprint"] = "chrome"; // TLS 指纹伪装
 
   // =========================================================
   // Utils
@@ -76,7 +73,6 @@ function main(config) {
 
   // =========================================================
   // Health check
-  // 改用 HTTPS 测速 URL，防止 HTTP 80 端口被 Wi-Fi 劫持/重定向
   // =========================================================
 
   const TEST_URL = "https://www.gstatic.com/generate_204";
@@ -107,18 +103,17 @@ function main(config) {
   );
 
   // =========================================================
-  // Region url-test
+  // Region Fallback (按节点顺序故障转移)
   // =========================================================
 
-  const proxyGroups = [];
   const createdRegionGroups = [];
 
-  const createUrlTest = (name, nodes) => {
+  const createRegionFallback = (name, nodes) => {
     if (!nodes || nodes.length === 0) return null;
     createdRegionGroups.push(name);
     return {
       name,
-      type: "url-test",
+      type: "fallback", // 类型改为 fallback，按节点列表顺序回退
       proxies: unique(nodes),
       url: TEST_URL,
       interval: TEST_INTERVAL,
@@ -130,16 +125,14 @@ function main(config) {
     };
   };
 
-  const groupJP = createUrlTest("日本自动策略", jpNodes);
-  const groupSG = createUrlTest("新国自动策略", sgNodes);
-  const groupTW = createUrlTest("台湾自动策略", twNodes);
-  const groupHK = createUrlTest("香港自动策略", hkNodes);
-  const groupUS = createUrlTest("美国自动策略", usNodes);
-  const groupOther = createUrlTest("其他自动策略", otherNodes);
+  const groupJP = createRegionFallback("日本自动策略", jpNodes);
+  const groupSG = createRegionFallback("新国自动策略", sgNodes);
+  const groupTW = createRegionFallback("台湾自动策略", twNodes);
+  const groupHK = createRegionFallback("香港自动策略", hkNodes);
+  const groupUS = createRegionFallback("美国自动策略", usNodes);
+  const groupOther = createRegionFallback("其他自动策略", otherNodes);
 
-  [groupJP, groupSG, groupTW, groupHK, groupUS, groupOther]
-    .filter(Boolean)
-    .forEach(g => proxyGroups.push(g));
+  const regionGroups = [groupJP, groupSG, groupTW, groupHK, groupUS, groupOther].filter(Boolean);
 
   // =========================================================
   // Asia fallback
@@ -148,9 +141,10 @@ function main(config) {
   const asiaCandidates = ["日本自动策略", "新国自动策略", "台湾自动策略", "香港自动策略"]
     .filter(name => createdRegionGroups.includes(name));
 
+  let asiaFallbackGroup = null;
   let hasAsiaFallback = false;
   if (asiaCandidates.length > 0) {
-    proxyGroups.push({
+    asiaFallbackGroup = {
       name: "亚洲自动策略",
       type: "fallback",
       proxies: asiaCandidates,
@@ -158,7 +152,7 @@ function main(config) {
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
       lazy: false
-    });
+    };
     hasAsiaFallback = true;
   }
 
@@ -171,9 +165,10 @@ function main(config) {
   if (createdRegionGroups.includes("美国自动策略")) globalCandidates.push("美国自动策略");
   if (createdRegionGroups.includes("其他自动策略")) globalCandidates.push("其他自动策略");
 
+  let globalFallbackGroup = null;
   let hasGlobalFallback = false;
   if (globalCandidates.length > 0) {
-    proxyGroups.push({
+    globalFallbackGroup = {
       name: "全球自动策略",
       type: "fallback",
       proxies: globalCandidates,
@@ -181,7 +176,7 @@ function main(config) {
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
       lazy: false
-    });
+    };
     hasGlobalFallback = true;
   }
 
@@ -196,11 +191,11 @@ function main(config) {
   if (createdRegionGroups.includes("其他自动策略")) mainSelectProxies.push("其他自动策略");
   mainSelectProxies.push("🧭 手动选择", "DIRECT");
 
-  proxyGroups.push({
+  const mainSelectGroup = {
     name: "🚀 节点选择",
     type: "select",
     proxies: unique(mainSelectProxies)
-  });
+  };
 
   const manualSelectProxies = [];
   if (hasGlobalFallback) manualSelectProxies.push("全球自动策略");
@@ -208,17 +203,29 @@ function main(config) {
   manualSelectProxies.push(...createdRegionGroups);
   manualSelectProxies.push(...usableProxyNames, "DIRECT");
 
-  proxyGroups.push({
+  const manualSelectGroup = {
     name: "🧭 手动选择",
     type: "select",
     proxies: unique(manualSelectProxies)
-  });
+  };
 
-  config["proxy-groups"].unshift(...proxyGroups);
+  // =========================================================
+  // 按指定 UI 显示顺序组装代理组
+  // 顺序：🚀 节点选择 -> 🧭 手动选择 -> 全球自动 -> 亚洲自动 -> 地区组
+  // =========================================================
+
+  const orderedProxyGroups = [
+    mainSelectGroup,
+    manualSelectGroup,
+    globalFallbackGroup,
+    asiaFallbackGroup,
+    ...regionGroups
+  ].filter(Boolean);
+
+  config["proxy-groups"].unshift(...orderedProxyGroups);
 
   // =========================================================
   // Rule Providers (MetaCubeX meta-rules-dat)
-  // 为避免规则更新被代理阻塞，这里推荐直接走 DIRECT 或者默认策略
   // =========================================================
 
   const META_RULE_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
