@@ -1,8 +1,8 @@
 // =========================================================
 // mihomo_override_final.js
-// 1. 区域组改为 fallback 按顺序故障转移
-// 2. 策略组顺序优化：节点选择 & 手动选择 置顶
-// 3. 全局开启 RTT 统一延迟与 HTTPS 测速防劫持
+// 1. 地区策略组全部采用 fallback 模式（按节点顺序故障转移）
+// 2. 移除 🚀 节点选择 中的 DIRECT 选项，杜绝自动退避走直连
+// 3. 优化 fallback 响应速度（timeout: 3000ms, max-failed-times: 1）
 // =========================================================
 
 function main(config) {
@@ -21,39 +21,25 @@ function main(config) {
   config["global-client-fingerprint"] = "chrome"; // TLS 指纹伪装
 
   // =========================================================
-  // Utils
+  // 节点提取与清洗
   // =========================================================
 
-  const unique = arr => [
-    ...new Set(
-      arr.filter(Boolean)
-    )
-  ];
+  const unique = arr => [...new Set(arr.filter(Boolean))];
 
   const EXCLUDE_NODE_REGEX =
     /(?:官网|套餐|剩余(?:流量)?|流量(?:剩余)?|到期|过期|订阅|客服|公告|Expire|Traffic|Subscription|Reset)/i;
 
-  const allProxyNames = unique(
-    config.proxies
-      .map(p => p && p.name)
-      .filter(
-        n => typeof n === "string" && n.trim()
-      )
-  );
+  let rawProxyNames = config.proxies
+    .map(p => p && p.name)
+    .filter(n => typeof n === "string" && n.trim());
 
-  const usableProxyNames =
-    allProxyNames.filter(
-      n => !EXCLUDE_NODE_REGEX.test(n)
-    );
+  const usableProxyNames = rawProxyNames.filter(n => !EXCLUDE_NODE_REGEX.test(n));
 
   // =========================================================
-  // Node classify
+  // 节点地区分类
   // =========================================================
 
-  const filterNodes = regex =>
-    usableProxyNames.filter(
-      n => regex.test(n)
-    );
+  const filterNodes = regex => usableProxyNames.filter(n => regex.test(n));
 
   const jpNodes = filterNodes(/(?:^|[^A-Za-z])(JP|JPN)(?:\d+)?(?:$|[^A-Za-z])|日本|Japan|东京|東京|大阪|埼玉|🇯🇵/i);
   const sgNodes = filterNodes(/(?:^|[^A-Za-z])(SG|SGP)(?:\d+)?(?:$|[^A-Za-z])|新加坡|Singapore|狮城|獅城|🇸🇬/i);
@@ -61,27 +47,20 @@ function main(config) {
   const hkNodes = filterNodes(/(?:^|[^A-Za-z])(HK|HKG)(?:\d+)?(?:$|[^A-Za-z])|香港|Hong[\s_-]*Kong|🇭🇰/i);
   const usNodes = filterNodes(/(?:^|[^A-Za-z])(US|USA)(?:\d+)?(?:$|[^A-Za-z])|美国|美國|United[\s_-]*States|洛杉矶|洛杉磯|西雅图|西雅圖|🇺🇸/i);
 
-  const classifiedNodes = new Set([
-    ...jpNodes,
-    ...sgNodes,
-    ...twNodes,
-    ...hkNodes,
-    ...usNodes
-  ]);
-
+  const classifiedNodes = new Set([...jpNodes, ...sgNodes, ...twNodes, ...hkNodes, ...usNodes]);
   const otherNodes = usableProxyNames.filter(n => !classifiedNodes.has(n));
 
   // =========================================================
-  // Health check
+  // 健康检查参数
   // =========================================================
 
-  const TEST_URL = "https://www.gstatic.com/generate_204";
+  const TEST_URL = "https://cp.cloudflare.com/generate_204";
   const TEST_INTERVAL = 300;
-  const TEST_TIMEOUT = 5000;
-  const TEST_TOLERANCE = 300;
+  const TEST_TIMEOUT = 3000; // 调低超时阈值，加快 fallback 故障切换
+  const TEST_TOLERANCE = 150;
 
   // =========================================================
-  // Remove old groups
+  // 清除旧策略组
   // =========================================================
 
   const removeGroups = [
@@ -103,7 +82,7 @@ function main(config) {
   );
 
   // =========================================================
-  // Region Fallback (按节点顺序故障转移)
+  // 地区策略组 (改为 fallback 模式，按节点顺序进行主备切换)
   // =========================================================
 
   const createdRegionGroups = [];
@@ -113,7 +92,7 @@ function main(config) {
     createdRegionGroups.push(name);
     return {
       name,
-      type: "fallback", // 类型改为 fallback，按节点列表顺序回退
+      type: "fallback", // 地区组内按照节点顺序 fallback
       proxies: unique(nodes),
       url: TEST_URL,
       interval: TEST_INTERVAL,
@@ -121,7 +100,7 @@ function main(config) {
       tolerance: TEST_TOLERANCE,
       lazy: false,
       "expected-status": "200-399",
-      "max-failed-times": 2
+      "max-failed-times": 1 // 1 次失败即触发秒切
     };
   };
 
@@ -135,7 +114,7 @@ function main(config) {
   const regionGroups = [groupJP, groupSG, groupTW, groupHK, groupUS, groupOther].filter(Boolean);
 
   // =========================================================
-  // Asia fallback
+  // 跨区策略组 (使用 fallback 进行跨区域故障转移)
   // =========================================================
 
   const asiaCandidates = ["日本自动策略", "新国自动策略", "台湾自动策略", "香港自动策略"]
@@ -155,10 +134,6 @@ function main(config) {
     };
     hasAsiaFallback = true;
   }
-
-  // =========================================================
-  // Global fallback
-  // =========================================================
 
   const globalCandidates = [];
   if (hasAsiaFallback) globalCandidates.push("亚洲自动策略");
@@ -181,15 +156,15 @@ function main(config) {
   }
 
   // =========================================================
-  // Main & Manual Selectors
+  // 主选择器与手动选择器
   // =========================================================
 
   const mainSelectProxies = [];
   if (hasGlobalFallback) mainSelectProxies.push("全球自动策略");
   if (hasAsiaFallback) mainSelectProxies.push("亚洲自动策略");
-  if (createdRegionGroups.includes("美国自动策略")) mainSelectProxies.push("美国自动策略");
-  if (createdRegionGroups.includes("其他自动策略")) mainSelectProxies.push("其他自动策略");
-  mainSelectProxies.push("🧭 手动选择", "DIRECT");
+  mainSelectProxies.push(...createdRegionGroups);
+  mainSelectProxies.push("🧭 手动选择"); 
+  // 杜绝放置 DIRECT，从根源阻止内核退避到直连
 
   const mainSelectGroup = {
     name: "🚀 节点选择",
@@ -209,11 +184,7 @@ function main(config) {
     proxies: unique(manualSelectProxies)
   };
 
-  // =========================================================
-  // 按指定 UI 显示顺序组装代理组
-  // 顺序：🚀 节点选择 -> 🧭 手动选择 -> 全球自动 -> 亚洲自动 -> 地区组
-  // =========================================================
-
+  // 组装策略组（主选择器在最顶端）
   const orderedProxyGroups = [
     mainSelectGroup,
     manualSelectGroup,
@@ -225,10 +196,10 @@ function main(config) {
   config["proxy-groups"].unshift(...orderedProxyGroups);
 
   // =========================================================
-  // Rule Providers (MetaCubeX meta-rules-dat)
+  // Rule Providers
   // =========================================================
 
-  const META_RULE_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
+  const META_RULE_BASE = "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta";
 
   const createGeositeProvider = name => ({
     type: "http",
@@ -237,7 +208,7 @@ function main(config) {
     url: `${META_RULE_BASE}/geo/geosite/${name}.mrs`,
     path: `./ruleset/MetaCubeX/geosite/${name}.mrs`,
     interval: 86400,
-    proxy: "🚀 节点选择"
+    proxy: "DIRECT"
   });
 
   const createGeoipProvider = name => ({
@@ -247,7 +218,7 @@ function main(config) {
     url: `${META_RULE_BASE}/geo/geoip/${name}.mrs`,
     path: `./ruleset/MetaCubeX/geoip/${name}.mrs`,
     interval: 86400,
-    proxy: "🚀 节点选择"
+    proxy: "DIRECT"
   });
 
   const managedRuleProviders = {
