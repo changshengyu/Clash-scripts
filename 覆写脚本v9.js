@@ -1,11 +1,6 @@
 // =========================================================
 // mihomo_override_final.js
-// Proxy architecture:
-// nodes
-//   -> region url-test
-//   -> Asia fallback
-//   -> Global fallback
-//   -> selector
+// 针对特定 Wi-Fi 阻断/高并发风控进行了全面优化
 // =========================================================
 
 function main(config) {
@@ -14,6 +9,19 @@ function main(config) {
   config["proxy-groups"] = config["proxy-groups"] || [];
   config["rule-providers"] = config["rule-providers"] || {};
   config.rules = config.rules || [];
+
+  // =========================================================
+  // 全局内核优化（解决 Wi-Fi 阻断 & 降低测速超时率）
+  // =========================================================
+
+  // 1. 统一延迟计算（类似 Sing-box 的 RTT 测速，大大降低超时）
+  config["unified-delay"] = true;
+
+  // 2. 开启 TCP 并发（提升握手成功率）
+  config["tcp-concurrent"] = true;
+
+  // 3. 全局 TLS 指纹伪装（防止特定 Wi-Fi 拦截节点握手）
+  config["global-client-fingerprint"] = "chrome";
 
   // =========================================================
   // Utils
@@ -68,9 +76,10 @@ function main(config) {
 
   // =========================================================
   // Health check
+  // 改用 HTTPS 测速 URL，防止 HTTP 80 端口被 Wi-Fi 劫持/重定向
   // =========================================================
 
-  const TEST_URL = "http://www.gstatic.com/generate_204";
+  const TEST_URL = "https://www.gstatic.com/generate_204";
   const TEST_INTERVAL = 300;
   const TEST_TIMEOUT = 5000;
   const TEST_TOLERANCE = 300;
@@ -98,11 +107,11 @@ function main(config) {
   );
 
   // =========================================================
-  // Region url-test (动态创建与记录)
+  // Region url-test
   // =========================================================
 
   const proxyGroups = [];
-  const createdRegionGroups = []; // 记录成功创建的区域组名称
+  const createdRegionGroups = [];
 
   const createUrlTest = (name, nodes) => {
     if (!nodes || nodes.length === 0) return null;
@@ -115,13 +124,12 @@ function main(config) {
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
       tolerance: TEST_TOLERANCE,
-      lazy: true,
+      lazy: false,
       "expected-status": "200-399",
       "max-failed-times": 2
     };
   };
 
-  // 创建并添加基础区域组
   const groupJP = createUrlTest("日本自动策略", jpNodes);
   const groupSG = createUrlTest("新国自动策略", sgNodes);
   const groupTW = createUrlTest("台湾自动策略", twNodes);
@@ -134,7 +142,7 @@ function main(config) {
     .forEach(g => proxyGroups.push(g));
 
   // =========================================================
-  // Asia fallback (安全拼接)
+  // Asia fallback
   // =========================================================
 
   const asiaCandidates = ["日本自动策略", "新国自动策略", "台湾自动策略", "香港自动策略"]
@@ -149,13 +157,13 @@ function main(config) {
       url: TEST_URL,
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
-      lazy: true
+      lazy: false
     });
     hasAsiaFallback = true;
   }
 
   // =========================================================
-  // Global fallback (安全拼接)
+  // Global fallback
   // =========================================================
 
   const globalCandidates = [];
@@ -172,13 +180,13 @@ function main(config) {
       url: TEST_URL,
       interval: TEST_INTERVAL,
       timeout: TEST_TIMEOUT,
-      lazy: true
+      lazy: false
     });
     hasGlobalFallback = true;
   }
 
   // =========================================================
-  // Main & Manual Selectors (动态汇聚所有可用组)
+  // Main & Manual Selectors
   // =========================================================
 
   const mainSelectProxies = [];
@@ -197,9 +205,7 @@ function main(config) {
   const manualSelectProxies = [];
   if (hasGlobalFallback) manualSelectProxies.push("全球自动策略");
   if (hasAsiaFallback) manualSelectProxies.push("亚洲自动策略");
-  // 加上所有创建成功的单地区组
   manualSelectProxies.push(...createdRegionGroups);
-  // 加上所有可用节点实体
   manualSelectProxies.push(...usableProxyNames, "DIRECT");
 
   proxyGroups.push({
@@ -208,11 +214,11 @@ function main(config) {
     proxies: unique(manualSelectProxies)
   });
 
-  // 应用到配置头部
   config["proxy-groups"].unshift(...proxyGroups);
 
   // =========================================================
   // Rule Providers (MetaCubeX meta-rules-dat)
+  // 为避免规则更新被代理阻塞，这里推荐直接走 DIRECT 或者默认策略
   // =========================================================
 
   const META_RULE_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
@@ -270,26 +276,21 @@ function main(config) {
   // =========================================================
 
   config.rules = [
-    // 自定义直连
     "DOMAIN-SUFFIX,yuchsh.top,DIRECT",
     "DOMAIN,clash.razord.top,DIRECT",
     "DOMAIN,yacd.haishan.me,DIRECT",
 
-    // Private
     "RULE-SET,private,DIRECT",
     "RULE-SET,geoip_private,DIRECT,no-resolve",
 
-    // Ads
     "RULE-SET,ads,REJECT",
 
-    // Steam 国内 CDN & 游戏直连
     "DOMAIN-SUFFIX,steamcontent.com,DIRECT",
     "DOMAIN-SUFFIX,steamserver.net,DIRECT",
     "DOMAIN-SUFFIX,steamchina.com,DIRECT",
     "RULE-SET,steam_cn,DIRECT",
     "RULE-SET,games_cn,DIRECT",
 
-    // 海外服务 -> 🚀 节点选择
     "RULE-SET,github,🚀 节点选择",
     "RULE-SET,apple,🚀 节点选择",
     "RULE-SET,onedrive,🚀 节点选择",
@@ -297,22 +298,18 @@ function main(config) {
     "RULE-SET,openai,🚀 节点选择",
     "RULE-SET,telegram,🚀 节点选择",
 
-    // Streaming -> 🚀 节点选择
     "RULE-SET,youtube,🚀 节点选择",
     "RULE-SET,netflix,🚀 节点选择",
     "RULE-SET,spotify,🚀 节点选择",
     "RULE-SET,tiktok,🚀 节点选择",
 
-    // Google & Steam 海外
     "RULE-SET,google,🚀 节点选择",
     "RULE-SET,steam,🚀 节点选择",
 
-    // 中国大陆直连
     "RULE-SET,cn,DIRECT",
     "RULE-SET,geoip_cn,DIRECT,no-resolve",
     "GEOIP,CN,DIRECT",
 
-    // 非中国区域 & Final
     "RULE-SET,geolocation_non_cn,🚀 节点选择",
     "MATCH,🚀 节点选择"
   ];
