@@ -100,15 +100,149 @@ async function operator(input, targetPlatform, context) {
     ...(asian.length?[auto(asia,asian)]:[]),...rg.map(g=>auto(g.name,g.members))];
   const action=t=>t==='REJECT'?{action:'reject'}:{action:'route',outbound:t};
   const rules=rulePlan.map(r=>r.set?{rule_set:[r.set[0]],...action(r.set[3])}:{[r.kind==='suffix'?'domain_suffix':'domain']:[r.value],...action(r.target)});
-  const config={log:{level:'info'},
-    dns:{servers:[{type:'udp',tag:'local-dns',server:'223.5.5.5'},{type:'https',tag:'remote-dns',server:'1.1.1.1',path:'/dns-query',detour:main}],rules:[{rule_set:['private','cn'],server:'local-dns'}],final:'remote-dns',strategy:'prefer_ipv4'},
-    inbounds:[{type:'mixed',tag:'mixed-in',listen:'127.0.0.1',listen_port:7890}],
-    outbounds:[...groups,...out,{type:'direct',tag:'DIRECT'}],
-    route:{auto_detect_interface:true,default_domain_resolver:'local-dns',rules:[{action:'sniff'},{protocol:'dns',action:'hijack-dns'},...rules],final:main,
-      rule_set:sets.map(([tag,kind,n])=>({type:'remote',tag,format:'binary',url:ruleURL(kind,n,'srs','https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo'),download_detour:'DIRECT',update_interval:'1d'}))},
-    experimental:{cache_file:{enabled:true},clash_api:{external_controller:'127.0.0.1:9090',secret:String(args.secret||'CHANGE-ME')}}};
-  if(endpoints.length) config.endpoints=endpoints;
-  if(String(args.tun)==='true') config.inbounds.push({type:'tun',tag:'tun-in',address:['172.19.0.1/30'],auto_route:true,strict_route:true});
-  input.$content=encode(config); return input;
+
+  // sing-box for Android 1.14+ 配置
+  // 复用上文已有的 main、groups、out、rules、
+  // sets、ruleURL、endpoints、args、encode 等变量。
+
+  const config = {
+    log: {
+      level: 'debug',
+      timestamp: true
+    },
+
+    // 1.14+ 使用显式 HTTP 客户端下载规则集
+    http_clients: [
+      {
+        tag: 'rules-http',
+        detour: main
+      }
+    ],
+
+    dns: {
+      servers: [
+        {
+          type: 'udp',
+          tag: 'local-dns',
+          server: '223.5.5.5'
+        },
+        {
+          type: 'https',
+          tag: 'remote-dns',
+          server: '1.1.1.1',
+          path: '/dns-query',
+          detour: main
+        }
+      ],
+      rules: [
+        {
+          rule_set: ['private', 'cn'],
+          action: 'route',
+          server: 'local-dns'
+        }
+      ],
+      final: 'remote-dns',
+      strategy: 'prefer_ipv4'
+    },
+
+    // Android 默认启用 VPN/TUN
+    inbounds: [
+      {
+        type: 'tun',
+        tag: 'tun-in',
+        address: ['172.19.0.1/30'],
+        auto_route: true,
+        dns_mode: 'hijack'
+      },
+      {
+        type: 'mixed',
+        tag: 'mixed-in',
+        listen: '127.0.0.1',
+        listen_port: 7890
+      }
+    ],
+
+    // 原有策略组和节点保留
+    outbounds: [
+      ...groups,
+      ...out,
+      {
+        type: 'direct',
+        tag: 'DIRECT'
+      }
+    ],
+
+    route: {
+      auto_detect_interface: true,
+      default_domain_resolver: 'local-dns',
+      default_http_client: 'rules-http',
+
+      rules: [
+        {
+          action: 'sniff'
+        },
+        {
+          protocol: 'dns',
+          action: 'hijack-dns'
+        },
+        ...rules
+      ],
+
+      final: main,
+
+      rule_set: sets.map(([tag, kind, name]) => ({
+        type: 'remote',
+        tag,
+        format: 'binary',
+        url: ruleURL(
+          kind,
+          name,
+          'srs',
+          'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo'
+        ),
+        http_client: 'rules-http',
+        update_interval: '1d'
+      }))
+    },
+
+    experimental: {
+      cache_file: {
+        enabled: true
+      }
+    }
+  };
+
+  // 保留通过 Sub-Store 转换生成的端点
+  if (endpoints.length) {
+    config.endpoints = endpoints;
+  }
+
+  // 排查模式：暂时关闭规则分流和远程规则集，
+  // 只测试节点和 Android TUN 是否真正可用。
+  if (String(args.debug) === 'true') {
+    config.dns = {
+      servers: [
+        {
+          type: 'udp',
+          tag: 'local-dns',
+          server: '223.5.5.5'
+        }
+      ],
+      final: 'local-dns',
+      strategy: 'prefer_ipv4'
+    };
+
+    config.route.rules = [
+      { action: 'sniff' },
+      { protocol: 'dns', action: 'hijack-dns' }
+    ];
+
+    config.route.rule_set = [];
+    config.route.final = names[0];
+  }
+
+  input.$content = encode(config);
+  return input;
+
 
 }
