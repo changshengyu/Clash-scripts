@@ -3,6 +3,7 @@
 // 结构参考 Loon 自动配置（iKeLee）：
 //   节点 → 地区组（自动 url-test + 手动 select）→ 兜底 fallback
 //   → 每类服务一个独立 select 分流组（可在面板里单独切换）
+// https://raw.githubusercontent.com/changshengyu/Clash-scripts/refs/heads/main/%E8%A6%86%E5%86%99%E8%84%9A%E6%9C%ACv10.js
 // =========================================================
 
 function main(config) {
